@@ -15,7 +15,7 @@
 
   <Target Name="PostBuildMoveDll" AfterTargets="Build">
     <PropertyGroup>
-      <TargetDir>R:\SteamLibrary\steamapps\common\Puck\Plugins\YPD's Mod</TargetDir>
+      <TargetDir>R:\SteamLibrary\steamapps\common\Puck\Plugins\ypdubai's Better Replays</TargetDir>
 
     </PropertyGroup>
 

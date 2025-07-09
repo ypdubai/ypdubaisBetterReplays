@@ -10,8 +10,6 @@ namespace BetterReplays
     private bool goalScored = false;
     private Goal goal;
     private bool isFirstPerson = false; // Start in third person
-
-    // Free look variables
     private bool isFreeLook = false;
     private Vector2 freeLookRotation = Vector2.zero;
     private Quaternion originalRotation;
@@ -283,7 +281,8 @@ namespace BetterReplays
     public void SetReplayCamera(BaseCamera camera)
     {
       this.camera = camera;
-      Debug.Log("Inside BetterReplayHandler: Set camera");
+      camera.CameraComponent.usePhysicalProperties = false;
+      camera.CameraComponent.fieldOfView = SettingsManager.Instance.Fov;
 
       // Initialize camera position behind goal scorer if available
       if (goalScorer != null)
