@@ -1,139 +1,9 @@
-﻿using System;
-using HarmonyLib;
-using SingularityGroup.HotReload;
 using UnityEngine;
-using UnityEngine.Rendering.Universal;
-using System.Collections;
-using Object = UnityEngine.Object;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Linq;
 using UnityEngine.InputSystem;
 
 namespace BetterReplays
 {
-  public class BetterReplaysPlugin : IPuckMod
-  {
-    static readonly Harmony harmony = new Harmony("YPD.mod");
-    private static Player goalScorer;
-    private static Player replayPlayer;
-    private static Goal scoredGoal;
-
-    private static BetterReplayHandler betterReplayHandler;
-
-    [HarmonyPatch(typeof(LevelManager), nameof(LevelManager.Client_EnableReplayCamera))]
-    public class ClientEnableReplayCameraPatch
-    {
-      [HarmonyPostfix]
-      static void Postfix(ReplayManager __instance, BaseCamera ___replayCamera)
-      {
-        betterReplayHandler = __instance.ReplayRecorder.gameObject.AddComponent<BetterReplayHandler>();
-        float userFOV = SettingsManager.Instance.Fov;
-        ___replayCamera.SetFieldOfView(userFOV + 45); // this value doesn't match the in game value, no clue why
-        betterReplayHandler.SetReplayCamera(___replayCamera);
-
-        // Start coroutine to wait for replay player to spawn before setting goal scorer
-        betterReplayHandler.StartCoroutine(WaitAndSetGoalScorer());
-        betterReplayHandler.StartCoroutine(WaitForGoal());
-
-        if (scoredGoal != null)
-        {
-          betterReplayHandler.SetGoal(scoredGoal);
-        }
-      }
-
-      static IEnumerator WaitAndSetGoalScorer()
-      {
-        yield return new WaitForSeconds(0.1f); // Wait 0.1 seconds for replay player to spawn
-
-        if (goalScorer != null && betterReplayHandler != null)
-        {
-          betterReplayHandler.SetGoalScorer(goalScorer);
-        }
-      }
-
-      static IEnumerator WaitForGoal()
-      {
-        yield return new WaitForSeconds(7.0f);
-
-        if (betterReplayHandler != null)
-        {
-          betterReplayHandler.SetGoalScored(true);
-        }
-      }
-    }
-
-    [HarmonyPatch(typeof(GoalTrigger))]
-    [HarmonyPatch("OnTriggerEnter", MethodType.Normal)]
-    public static class GoalTriggerOnTriggerEnterPatch
-    {
-      [HarmonyPostfix]
-      public static void Postfix(Goal ___goal)
-      {
-        scoredGoal = ___goal;
-        Debug.Log("Goal trigger entered on: " + ___goal.name);
-
-        if (betterReplayHandler != null)
-        {
-          betterReplayHandler.SetGoal(___goal);
-        }
-      }
-    }
-
-    // Track the goal scoring player
-    [HarmonyPatch(typeof(UIAnnouncement), nameof(UIAnnouncement.ShowBlueTeamScoreAnnouncement))]
-    public static class UIAnnouncementShowBlueTeamScoreAnnouncement
-    {
-      [HarmonyPostfix]
-      public static void Postfix(UIAnnouncement __instance, float time, Player goalPlayer, Player assistPlayer, Player secondAssistPlayer)
-      {
-        goalScorer = goalPlayer;
-        Debug.Log("Set goalScorer to " + goalPlayer.name);
-      }
-    }
-
-    [HarmonyPatch(typeof(UIAnnouncement), nameof(UIAnnouncement.ShowRedTeamScoreAnnouncement))]
-    public static class UIAnnouncementShowRedTeamScoreAnnouncement
-    {
-      [HarmonyPostfix]
-      public static void Postfix(UIAnnouncement __instance, float time, Player goalPlayer, Player assistPlayer, Player secondAssistPlayer)
-      {
-        goalScorer = goalPlayer;
-        Debug.Log("Set goalScorer to " + goalPlayer.name);
-      }
-    }
-
-    public bool OnEnable()
-    {
-      try
-      {
-        harmony.PatchAll();
-      }
-      catch (Exception e)
-      {
-        Debug.LogError($"Harmony patch failed: {e.Message}");
-        return false;
-      }
-
-      return true;
-    }
-
-    public bool OnDisable()
-    {
-      try
-      {
-        harmony.UnpatchSelf();
-      }
-      catch (Exception e)
-      {
-        Debug.LogError($"Harmony unpatch failed: {e.Message}");
-        return false;
-      }
-      return true;
-    }
-  }
-
-  public class BetterReplayHandler : MonoBehaviour
+  public class BetterReplaysHandler : MonoBehaviour
   {
     private Player goalScorer;
     private BaseCamera camera;
@@ -156,70 +26,6 @@ namespace BetterReplays
 
       // Destroy this component after 10 seconds
       Destroy(this, 10.0f);
-    }
-
-    public void SetGoal(Goal goal)
-    {
-      this.goal = goal;
-    }
-
-    public void SetGoalScorer(Player goalScorer)
-    {
-      foreach (Player replayPlayerSearch in PlayerManager.Instance.GetReplayPlayers())
-      {
-        if (replayPlayerSearch.Username.Value.ToString() == goalScorer.Username.Value.ToString() &&
-            replayPlayerSearch.Number.Value.ToString() == goalScorer.Number.Value.ToString())
-        {
-          this.goalScorer = replayPlayerSearch;
-        }
-      }
-
-      if (this.goalScorer == null)
-      {
-        Debug.Log("Could not locate replay player for goal scorer!");
-      }
-      else
-      {
-        // Initialize camera position if camera is already set
-        if (camera != null)
-        {
-          InitializeCameraPosition();
-        }
-      }
-    }
-
-    public void SetReplayCamera(BaseCamera camera)
-    {
-      this.camera = camera;
-      Debug.Log("Inside BetterReplayHandler: Set camera");
-
-      // Initialize camera position behind goal scorer if available
-      if (goalScorer != null)
-      {
-        InitializeCameraPosition();
-      }
-    }
-
-    private void InitializeCameraPosition()
-    {
-      if (goalScorer == null || camera == null) return;
-
-      // Position camera behind the goal scorer initially
-      Vector3 playerPosition = goalScorer.PlayerCamera.transform.position;
-      Vector3 playerForward = goalScorer.PlayerCamera.transform.forward;
-
-      // Place camera behind player (opposite to forward direction)
-      Vector3 initialPosition = playerPosition - playerForward * 3.0f; // 3 units behind
-
-      camera.transform.position = initialPosition;
-      camera.transform.rotation = goalScorer.PlayerCamera.transform.rotation;
-
-      Debug.Log("Initialized camera position behind goal scorer");
-    }
-
-    public void SetGoalScored(bool goalScored)
-    {
-      this.goalScored = goalScored;
     }
 
     public void Update()
@@ -328,7 +134,7 @@ namespace BetterReplays
         camera.transform.SetPositionAndRotation(targetPosition, smoothedRotation);
       }
 
-      hideGoalScorer();
+      HideGoalScorer();
     }
 
     private void HandleThirdPersonCamera(Vector3 targetPosition, Quaternion targetRotation)
@@ -408,20 +214,88 @@ namespace BetterReplays
         {
           camera.transform.position = smoothedPosition;
         }
+
+        ShowGoalScorer();
       }
     }
-    private void hideGoalScorer()
+
+    private void InitializeCameraPosition()
+    {
+      if (goalScorer == null || camera == null) return;
+
+      // Position camera behind the goal scorer initially
+      Vector3 playerPosition = goalScorer.PlayerCamera.transform.position;
+      Vector3 playerForward = goalScorer.PlayerCamera.transform.forward;
+
+      // Place camera behind player (opposite to forward direction)
+      Vector3 initialPosition = playerPosition - playerForward * 3.0f; // 3 units behind
+
+      camera.transform.position = initialPosition;
+      camera.transform.rotation = goalScorer.PlayerCamera.transform.rotation;
+
+      Debug.Log("Initialized camera position behind goal scorer");
+    }
+
+    private void HideGoalScorer()
     {
       goalScorer.PlayerBody.PlayerMesh.PlayerGroin.gameObject.SetActive(false);
       goalScorer.PlayerBody.PlayerMesh.PlayerTorso.gameObject.SetActive(false);
       goalScorer.PlayerBody.PlayerMesh.PlayerHead.gameObject.SetActive(false);
     }
 
-    private void showGoalScorer()
+    private void ShowGoalScorer()
     {
       goalScorer.PlayerBody.PlayerMesh.PlayerGroin.gameObject.SetActive(true);
       goalScorer.PlayerBody.PlayerMesh.PlayerTorso.gameObject.SetActive(true);
       goalScorer.PlayerBody.PlayerMesh.PlayerHead.gameObject.SetActive(true);
     }
+
+    public void SetGoal(Goal goal)
+    {
+      this.goal = goal;
+    }
+
+    public void SetGoalScorer(Player goalScorer)
+    {
+      foreach (Player replayPlayerSearch in PlayerManager.Instance.GetReplayPlayers())
+      {
+        if (replayPlayerSearch.Username.Value.ToString() == goalScorer.Username.Value.ToString() &&
+            replayPlayerSearch.Number.Value.ToString() == goalScorer.Number.Value.ToString())
+        {
+          this.goalScorer = replayPlayerSearch;
+        }
+      }
+
+      if (this.goalScorer == null)
+      {
+        Debug.Log("Could not locate replay player for goal scorer!");
+      }
+      else
+      {
+        // Initialize camera position if camera is already set
+        if (camera != null)
+        {
+          InitializeCameraPosition();
+        }
+      }
+    }
+
+    public void SetReplayCamera(BaseCamera camera)
+    {
+      this.camera = camera;
+      Debug.Log("Inside BetterReplayHandler: Set camera");
+
+      // Initialize camera position behind goal scorer if available
+      if (goalScorer != null)
+      {
+        InitializeCameraPosition();
+      }
+    }
+
+    public void SetGoalScored(bool goalScored)
+    {
+      this.goalScored = goalScored;
+    }
+
   }
 }
