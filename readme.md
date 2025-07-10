@@ -1,4 +1,4 @@
-# YPD's Better Replays
+# ypdubai's Better Replays
 ## A mod that adds better replays to Puck.
 
 ### Todo:

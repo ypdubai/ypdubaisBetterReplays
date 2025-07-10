@@ -2,6 +2,8 @@
 using HarmonyLib;
 using UnityEngine;
 using System.Collections;
+using UnityEngine.Rendering.Universal;
+using TMPro;
 
 namespace BetterReplays
 {
@@ -12,7 +14,8 @@ namespace BetterReplays
 
     static readonly Harmony harmony = new Harmony("ypdubai.betterreplays");
     private static Player goalScorer;
-    private static Player replayPlayer;
+    private static TMP_Text goalScorerUsernameText;
+    private static TMP_Text goalScorerNumberText;
     private static Goal scoredGoal;
 
     private static BetterReplaysHandler betterReplayHandler;
@@ -43,6 +46,8 @@ namespace BetterReplays
         if (goalScorer != null && betterReplayHandler != null)
         {
           betterReplayHandler.SetGoalScorer(goalScorer);
+          betterReplayHandler.SetGoalScorerNumberText(goalScorerNumberText);
+          betterReplayHandler.SetGoalScorerUsernameText(goalScorerUsernameText);
         }
       }
 
@@ -81,6 +86,21 @@ namespace BetterReplays
       public static void Postfix(UIAnnouncement __instance, float time, Player goalPlayer, Player assistPlayer, Player secondAssistPlayer)
       {
         goalScorer = goalPlayer;
+
+        //TODO: this is using goalPlayer instead of the replayplayer so it never works, this needs to be moved into somewhere where we have the replayplayer
+        if (goalPlayer?.PlayerBody?.PlayerMesh != null)
+        {
+          var playerMeshTraverse = Traverse.Create(goalPlayer.PlayerBody.PlayerMesh);
+
+          var usernameTextField = playerMeshTraverse.Field("usernameText").GetValue<TMP_Text>();
+          var numberTextField = playerMeshTraverse.Field("numberText").GetValue<TMP_Text>();
+
+          goalScorerUsernameText = usernameTextField;
+          goalScorerNumberText = numberTextField;
+
+          Debug.Log(usernameTextField.text);
+          Debug.Log(numberTextField.text);
+        }
       }
     }
 
@@ -90,7 +110,19 @@ namespace BetterReplays
       [HarmonyPostfix]
       public static void Postfix(UIAnnouncement __instance, float time, Player goalPlayer, Player assistPlayer, Player secondAssistPlayer)
       {
+        //TODO: this is using goalPlayer instead of the replayplayer so it never works, this needs to be moved into somewhere where we have the replayplayer
         goalScorer = goalPlayer;
+
+        if (goalPlayer?.PlayerBody?.PlayerMesh != null)
+        {
+          var playerMeshTraverse = Traverse.Create(goalPlayer.PlayerBody.PlayerMesh);
+
+          var usernameTextField = playerMeshTraverse.Field("usernameText").GetValue<TMP_Text>();
+          var numberTextField = playerMeshTraverse.Field("numberText").GetValue<TMP_Text>();
+
+          goalScorerUsernameText = usernameTextField;
+          goalScorerNumberText = numberTextField;
+        }
       }
     }
 

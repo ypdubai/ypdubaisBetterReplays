@@ -1,0 +1,51 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net4.8</TargetFramework>
+    <AssemblyName>ypdubaisBetterReplays</AssemblyName>
+    <RootNamespace>BetterReplays</RootNamespace>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="src\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Libs Include="libs\*.dll" Exclude="libs\System.*.dll" />
+
+    <Reference Include="@(Libs)">
+      <HintPath>%(Libs.FullPath)</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Only run post-build actions if build succeeded -->
+  <Target Name="PostBuildCopyAndRun" AfterTargets="Build" Condition="'$(BuildingProject)' == 'true'">
+    <PropertyGroup>
+      <TargetDir>R:\SteamLibrary\steamapps\common\Puck\Plugins\ypdubai's Better Replays</TargetDir>
+    </PropertyGroup>
+
+    <!-- Create directory if it doesn't exist -->
+    <MakeDir Directories="$(TargetDir)" />
+
+    <!-- Copy the DLL only if build was successful -->
+    <Copy
+      SourceFiles="$(OutputPath)$(AssemblyName).dll"
+      DestinationFolder="$(TargetDir)"
+      OverwriteReadOnlyFiles="true"
+      ContinueOnError="false" />
+
+    <Message Importance="high" Text="Successfully copied $(AssemblyName).dll to $(TargetDir)" />
+
+    <!-- Launch game only after successful copy -->
+    <Exec
+      Command="&quot;R:\SteamLibrary\steamapps\common\Puck\Puck.exe&quot;"
+      ContinueOnError="true"
+      IgnoreExitCode="true" />
+
+    <Message Importance="high" Text="Launched Puck.exe" />
+  </Target>
+
+</Project>
