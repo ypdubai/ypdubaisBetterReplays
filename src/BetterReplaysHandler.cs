@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using System;
 using TMPro;
+using HarmonyLib;
 
 namespace BetterReplays
 {
@@ -23,7 +24,7 @@ namespace BetterReplays
     private const float FREE_LOOK_PITCH_MAX = 80f;
     private const float ZOOM_MIN_DISTANCE = 0.2f;
     private const float ZOOM_MAX_DISTANCE = 16.0f;
-    private const float ZOOM_DEFAULT_DISTANCE = 3.0f;
+    private const float ZOOM_DEFAULT_DISTANCE = 1.0f;
     private const float LERP_SPEED_AT_MIN_ZOOM = 0.1f;
     private const float LERP_SPEED_AT_MAX_ZOOM = 0.01f;
     private const float LERP_SPEED_AT_DEFAULT_ZOOM = 0.02f;
@@ -33,6 +34,8 @@ namespace BetterReplays
     // These are private in PlayerMesh, but we need them to hide and show them when in first or third person
     private TMP_Text goalScorerUsernameText;
     private TMP_Text goalScorerNumberText;
+    private float originalUsernameAlpha;
+    private float originalNumberAlpha;
 
     private BaseCamera camera;
     private bool goalScored = false;
@@ -361,15 +364,13 @@ namespace BetterReplays
     {
       try
       {
-         if (goalScorer?.PlayerBody?.PlayerMesh != null
-         && goalScorerUsernameText != null
-         && goalScorerNumberText != null)
+        if (goalScorer?.PlayerBody?.PlayerMesh != null)
         {
           goalScorer.PlayerBody.PlayerMesh.PlayerGroin.gameObject.SetActive(false);
           goalScorer.PlayerBody.PlayerMesh.PlayerTorso.gameObject.SetActive(false);
           goalScorer.PlayerBody.PlayerMesh.PlayerHead.gameObject.SetActive(false);
-          goalScorerUsernameText.gameObject.SetActive(false);
-          goalScorerNumberText.gameObject.SetActive(false);
+          goalScorerUsernameText.alpha = 0f;
+          goalScorerNumberText.alpha = 0f;
         }
         else
         {
@@ -386,15 +387,13 @@ namespace BetterReplays
     {
       try
       {
-        if (goalScorer?.PlayerBody?.PlayerMesh != null
-         && goalScorerUsernameText != null
-         && goalScorerNumberText != null)
+        if (goalScorer?.PlayerBody?.PlayerMesh != null)
         {
           goalScorer.PlayerBody.PlayerMesh.PlayerGroin.gameObject.SetActive(true);
           goalScorer.PlayerBody.PlayerMesh.PlayerTorso.gameObject.SetActive(true);
           goalScorer.PlayerBody.PlayerMesh.PlayerHead.gameObject.SetActive(true);
-          goalScorerUsernameText.gameObject.SetActive(true);
-          goalScorerNumberText.gameObject.SetActive(true);
+          goalScorerUsernameText.alpha = originalUsernameAlpha;
+          goalScorerNumberText.alpha = originalNumberAlpha;
         }
         else
         {
@@ -426,6 +425,25 @@ namespace BetterReplays
             replayPlayerSearch.Number.Value.ToString() == goalScorer.Number.Value.ToString())
         {
           this.goalScorer = replayPlayerSearch;
+          // Since the username text and number text for a player is private, we need to use Traverse to obtain them for hiding and showing later.
+          if (this.goalScorer?.PlayerBody?.PlayerMesh != null)
+          {
+            BetterReplaysPlugin.Log("PlayerMesh is not null");
+            var playerMeshTraverse = Traverse.Create(this.goalScorer.PlayerBody.PlayerMesh);
+
+            var usernameTextField = playerMeshTraverse.Field("usernameText").GetValue<TMP_Text>();
+            var numberTextField = playerMeshTraverse.Field("numberText").GetValue<TMP_Text>();
+
+            goalScorerUsernameText = usernameTextField;
+            goalScorerNumberText = numberTextField;
+
+            originalUsernameAlpha = goalScorerUsernameText.alpha;
+            originalNumberAlpha = goalScorerNumberText.alpha;
+          }
+          else
+          {
+            BetterReplaysPlugin.Log("PlayerMesh is null");
+          }
           break;
         }
       }
