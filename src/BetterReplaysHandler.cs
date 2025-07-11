@@ -325,9 +325,9 @@ namespace BetterReplays
           }
 
           camera.transform.position = smoothedPosition;
-
-          ShowGoalScorer();
         }
+
+        ShowGoalScorer();
       }
       catch (System.Exception e)
       {

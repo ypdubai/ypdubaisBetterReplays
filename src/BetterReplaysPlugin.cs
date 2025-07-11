@@ -1,9 +1,14 @@
-﻿using System;
+﻿// Shoutout to Toaster for ToastersRinkCompanion and ToastersCellyCam,
+// I used them as a starting point for this mod and it helped a lot.
+// https://github.com/ckhawks/ToastersRinkCompanion
+// https://github.com/ckhawks/ToasterCellyCam
+
+using System;
 using HarmonyLib;
 using UnityEngine;
 using System.Collections;
-using UnityEngine.Rendering.Universal;
-using TMPro;
+using System.Linq;
+using UnityEngine.Rendering;
 
 namespace BetterReplays
 {
@@ -14,8 +19,6 @@ namespace BetterReplays
 
     static readonly Harmony harmony = new Harmony("ypdubai.betterreplays");
     private static Player goalScorer;
-    private static TMP_Text goalScorerUsernameText;
-    private static TMP_Text goalScorerNumberText;
     private static Goal scoredGoal;
 
     private static BetterReplaysHandler betterReplayHandler;
@@ -101,29 +104,69 @@ namespace BetterReplays
     {
       try
       {
-        harmony.PatchAll();
+        if (IsDedicatedServer())
+        {
+          LogError("Environment: dedicated server.");
+          LogError("This is only meant to be used on clients!");
+          return false;
+        }
+        else
+        {
+          Log("Bettering replays...");
+          harmony.PatchAll();
+          Log("List of patched methods:");
+          LogAllPatchedMethods();
+          Log("Replays bettered.");
+          return true;
+        }
       }
       catch (Exception e)
       {
-        LogError($"Harmony patch failed: {e.Message}");
+        LogError($"Failed to enable: {e.Message}");
         return false;
       }
-
-      return true;
     }
 
     public bool OnDisable()
     {
       try
       {
+        Log("Unbettering replays...");
         harmony.UnpatchSelf();
+        Log("Replays unbettered.");
       }
       catch (Exception e)
       {
-        LogError($"Harmony unpatch failed: {e.Message}");
+        LogError($"Failed to disable: {e.Message}");
         return false;
       }
       return true;
+    }
+
+    // Copied this from https://github.com/ckhawks/ToastersRinkCompanion/blob/main/src/Plugin.cs
+    public static bool IsDedicatedServer()
+    {
+      return SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null;
+    }
+
+    // Copied this from https://github.com/ckhawks/ToastersRinkCompanion/blob/main/src/Plugin.cs
+    public static void LogAllPatchedMethods()
+    {
+      var allPatchedMethods = harmony.GetPatchedMethods();
+      var pluginId = harmony.Id;
+
+      var mine = allPatchedMethods
+          .Select(m => new { method = m, info = Harmony.GetPatchInfo(m) })
+          .Where(x =>
+              x.info.Prefixes.Any(p => p.owner == pluginId) ||
+              x.info.Postfixes.Any(p => p.owner == pluginId) ||
+              x.info.Transpilers.Any(p => p.owner == pluginId) ||
+              x.info.Finalizers.Any(p => p.owner == pluginId)
+          )
+          .Select(x => x.method);
+
+      foreach (var m in mine)
+        Log($" - {m.DeclaringType.FullName}.{m.Name}");
     }
 
     public static void Log(string message)
