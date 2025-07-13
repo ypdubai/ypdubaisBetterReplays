@@ -8,27 +8,10 @@ namespace BetterReplays
 {
   public class BetterReplaysHandler : MonoBehaviour
   {
-    // Constants for camera behavior
-    private const float PLAYER_POSITION_SMOOTHING = 0.3f;
-    private const float PUSH_BACK_SPEED = 0.01f;
-    private const float FREE_LOOK_ORBITAL_LERP_SPEED = 0.05f;
-    private const float MIN_CAMERA_DISTANCE = 2.0f;
-    private const float FREE_LOOK_TRANSITION_DURATION = 0.5f;
-    private const float COMPONENT_DESTROY_TIME = 10.0f;
     private const int LOG_THROTTLE_FRAMES = 300;
-    private const float FIRST_PERSON_ROTATION_LERP_SPEED = 0.1f;
-    private const float CAMERA_OFFSET_HEIGHT = 0.5f;
-    private const float INITIAL_CAMERA_DISTANCE = 3.0f;
-    private const float FIRST_PERSON_PITCH_LIMIT = 90f;
-    private const float FREE_LOOK_PITCH_MIN = -20f;
-    private const float FREE_LOOK_PITCH_MAX = 80f;
-    private const float ZOOM_MIN_DISTANCE = 0.2f;
-    private const float ZOOM_MAX_DISTANCE = 16.0f;
-    private const float ZOOM_DEFAULT_DISTANCE = 1.0f;
-    private const float LERP_SPEED_AT_MIN_ZOOM = 0.1f;
-    private const float LERP_SPEED_AT_MAX_ZOOM = 0.01f;
-    private const float LERP_SPEED_AT_DEFAULT_ZOOM = 0.02f;
-
+    private BetterReplaysConfig config;
+    private static bool persistedIsFirstPerson = false;
+    private static float persistedZoomDistance = 1.0f;
     private Player goalScorer;
 
     // These are private in PlayerMesh, but we need them to hide and show them when in first or third person
@@ -49,19 +32,41 @@ namespace BetterReplays
     private float freeLookTransitionTime = 0f;
     private Vector3 lastPlayerPosition;
     private Vector3 smoothedPlayerPosition;
-    private float currentZoomDistance = ZOOM_DEFAULT_DISTANCE;
+    private float currentZoomDistance;
+    private bool isTransitioningAfterGoal = false;
+    private float goalTransitionTime = 0f;
+    private Quaternion goalTransitionStartRotation;
 
     public void Start()
     {
+      config = BetterReplaysConfig.LoadConfig();
+      BetterReplaysPlugin.Log("Handler initialized - config loaded and validated");
+
+      if (config.rememberCameraState)
+      {
+        isFirstPerson = persistedIsFirstPerson;
+        currentZoomDistance = persistedZoomDistance;
+      }
+      else
+      {
+        currentZoomDistance = config.zoomDefaultDistance;
+      }
+
       lookSensitivity = SettingsManager.Instance.LookSensitivity;
       BetterReplaysPlugin.Log("Better Replays handler initialized with sensitivity: " + lookSensitivity);
 
       // Destroy this component after 10 seconds
-      Destroy(this, COMPONENT_DESTROY_TIME);
+      Destroy(this, 10.0f);
     }
 
     public void Update()
     {
+      if (BetterReplaysConfig.HasConfigChanged())
+      {
+        config = BetterReplaysConfig.LoadConfig();
+        BetterReplaysPlugin.Log("Configuration reloaded due to file changes");
+      }
+
       if (goalScorer == null || camera == null || goal == null)
       {
         if (Time.frameCount % LOG_THROTTLE_FRAMES == 0)
@@ -73,9 +78,39 @@ namespace BetterReplays
         return;
       }
 
-      if (Keyboard.current.cKey.wasPressedThisFrame)
+      // Handle camera toggle input
+      bool togglePressed = false;
+      if (config.IsToggleCameraMouseButton())
+      {
+        // Handle mouse button input
+        if (config.toggleCameraKey.Equals("leftButton", StringComparison.OrdinalIgnoreCase))
+          togglePressed = Mouse.current.leftButton.wasPressedThisFrame;
+        else if (config.toggleCameraKey.Equals("rightButton", StringComparison.OrdinalIgnoreCase))
+          togglePressed = Mouse.current.rightButton.wasPressedThisFrame;
+        else if (config.toggleCameraKey.Equals("middleButton", StringComparison.OrdinalIgnoreCase))
+          togglePressed = Mouse.current.middleButton.wasPressedThisFrame;
+        else if (config.toggleCameraKey.Equals("forwardButton", StringComparison.OrdinalIgnoreCase))
+          togglePressed = Mouse.current.forwardButton.wasPressedThisFrame;
+        else if (config.toggleCameraKey.Equals("backButton", StringComparison.OrdinalIgnoreCase))
+          togglePressed = Mouse.current.backButton.wasPressedThisFrame;
+      }
+      else
+      {
+        // Handle keyboard key input
+        Key toggleKey = config.GetToggleCameraKey();
+        if (toggleKey != Key.None)
+        {
+          togglePressed = Keyboard.current[toggleKey].wasPressedThisFrame;
+        }
+      }
+
+      if (togglePressed)
       {
         isFirstPerson = !isFirstPerson;
+        if (config.rememberCameraState)
+        {
+          persistedIsFirstPerson = isFirstPerson;
+        }
         BetterReplaysPlugin.Log("Camera mode switched to: " + (isFirstPerson ? "First Person" : "Third Person"));
       }
 
@@ -87,28 +122,111 @@ namespace BetterReplays
         {
           float zoomFactor = scrollInput > 0 ? 0.9f : 1.1f;
           currentZoomDistance *= zoomFactor;
-          currentZoomDistance = Mathf.Clamp(currentZoomDistance, ZOOM_MIN_DISTANCE, ZOOM_MAX_DISTANCE);
+          currentZoomDistance = Mathf.Clamp(currentZoomDistance, 0.0f, config.zoomMaxDistance);
+
+          if (config.rememberCameraState)
+          {
+            persistedZoomDistance = currentZoomDistance;
+          }
         }
       }
 
-      if (Mouse.current.rightButton.wasPressedThisFrame)
+      // Handle free look input
+      bool freeLookPressed = false;
+      bool freeLookReleased = false;
+
+      if (config.IsFreeLookMouseButton())
       {
-        isFreeLook = true;
-        isTransitioningToFreeLook = true;
-        freeLookTransitionTime = 0f;
-        originalRotation = camera.transform.rotation;
-
-        Vector3 currentEuler = camera.transform.rotation.eulerAngles;
-        freeLookRotation.x = currentEuler.y;
-        freeLookRotation.y = currentEuler.x;
-
-        if (freeLookRotation.y > 180f)
-          freeLookRotation.y -= 360f;
-
-        Cursor.lockState = CursorLockMode.Locked;
+        // Handle mouse button input
+        if (config.freeLookKey.Equals("leftButton", StringComparison.OrdinalIgnoreCase))
+        {
+          freeLookPressed = Mouse.current.leftButton.wasPressedThisFrame;
+          freeLookReleased = Mouse.current.leftButton.wasReleasedThisFrame;
+        }
+        else if (config.freeLookKey.Equals("rightButton", StringComparison.OrdinalIgnoreCase))
+        {
+          freeLookPressed = Mouse.current.rightButton.wasPressedThisFrame;
+          freeLookReleased = Mouse.current.rightButton.wasReleasedThisFrame;
+        }
+        else if (config.freeLookKey.Equals("middleButton", StringComparison.OrdinalIgnoreCase))
+        {
+          freeLookPressed = Mouse.current.middleButton.wasPressedThisFrame;
+          freeLookReleased = Mouse.current.middleButton.wasReleasedThisFrame;
+        }
+        else if (config.freeLookKey.Equals("forwardButton", StringComparison.OrdinalIgnoreCase))
+        {
+          freeLookPressed = Mouse.current.forwardButton.wasPressedThisFrame;
+          freeLookReleased = Mouse.current.forwardButton.wasReleasedThisFrame;
+        }
+        else if (config.freeLookKey.Equals("backButton", StringComparison.OrdinalIgnoreCase))
+        {
+          freeLookPressed = Mouse.current.backButton.wasPressedThisFrame;
+          freeLookReleased = Mouse.current.backButton.wasReleasedThisFrame;
+        }
+      }
+      else
+      {
+        // Handle keyboard key input
+        Key freeLookKey = config.GetFreeLookKey();
+        if (freeLookKey != Key.None)
+        {
+          freeLookPressed = Keyboard.current[freeLookKey].wasPressedThisFrame;
+          freeLookReleased = Keyboard.current[freeLookKey].wasReleasedThisFrame;
+        }
       }
 
-      if (Mouse.current.rightButton.wasReleasedThisFrame)
+      if (freeLookPressed)
+      {
+        if (config.IsFreeLookToggle())
+        {
+          bool wasFreeLook = isFreeLook;
+          isFreeLook = !isFreeLook;
+
+          if (isFreeLook)
+          {
+            isTransitioningToFreeLook = true;
+            freeLookTransitionTime = 0f;
+            originalRotation = camera.transform.rotation;
+
+            Vector3 currentEuler = camera.transform.rotation.eulerAngles;
+            freeLookRotation.x = currentEuler.y;
+            freeLookRotation.y = currentEuler.x;
+
+            if (freeLookRotation.y > 180f)
+            {
+              freeLookRotation.y -= 360f;
+            }
+
+            Cursor.lockState = CursorLockMode.Locked;
+          }
+          else if (wasFreeLook)
+          {
+            isTransitioningToFreeLook = false;
+            Cursor.lockState = CursorLockMode.None;
+          }
+        }
+        else
+        {
+          isFreeLook = true;
+
+          isTransitioningToFreeLook = true;
+          freeLookTransitionTime = 0f;
+          originalRotation = camera.transform.rotation;
+
+          Vector3 currentEuler = camera.transform.rotation.eulerAngles;
+          freeLookRotation.x = currentEuler.y;
+          freeLookRotation.y = currentEuler.x;
+
+          if (freeLookRotation.y > 180f)
+          {
+            freeLookRotation.y -= 360f;
+          }
+
+          Cursor.lockState = CursorLockMode.Locked;
+        }
+      }
+
+      if (!config.IsFreeLookToggle() && freeLookReleased)
       {
         isFreeLook = false;
         isTransitioningToFreeLook = false;
@@ -124,8 +242,8 @@ namespace BetterReplays
 
       if (!isFirstPerson)
       {
-        // In free look mode or after goal scored, target the goal scorer
-        if (isFreeLook || goalScored)
+        // Before goal is scored, target the goal. After goal is scored, target the player
+        if (goalScored || isFreeLook)
         {
           if (goalScorer.PlayerCamera?.transform != null)
           {
@@ -165,7 +283,7 @@ namespace BetterReplays
         return;
       }
 
-      // For third person, adjust target position to be above and behind player
+      // For third person, adjust target position based on replay phase
       if (!isFirstPerson)
       {
         try
@@ -179,20 +297,34 @@ namespace BetterReplays
           }
           else
           {
-            smoothedPlayerPosition = Vector3.Lerp(smoothedPlayerPosition, currentPlayerPosition, PLAYER_POSITION_SMOOTHING);
+            smoothedPlayerPosition = Vector3.Lerp(smoothedPlayerPosition, currentPlayerPosition, config.playerPositionSmoothing);
           }
           lastPlayerPosition = currentPlayerPosition;
+          if (goalScored || isFreeLook)
+          {
+            Vector3 goalToPlayerDirection = (smoothedPlayerPosition - goal.transform.position).normalized;
+            float safeZoomDistance = Mathf.Max(0f, currentZoomDistance);
 
-          Vector3 playerForward = goalScorer.PlayerCamera.transform.forward;
+            float heightMultiplier = Mathf.Lerp(1.0f, 0.5f, (safeZoomDistance - config.zoomDefaultDistance) / (config.zoomMaxDistance - config.zoomDefaultDistance));
+            heightMultiplier = Mathf.Clamp(heightMultiplier, 0.5f, 1.0f);
+            float dynamicHeight = config.cameraOffsetHeight * heightMultiplier;
 
-          // Lower camera height as zoom increases
-          float heightMultiplier = Mathf.Lerp(1.0f, 0.5f, (currentZoomDistance - ZOOM_DEFAULT_DISTANCE) / (ZOOM_MAX_DISTANCE - ZOOM_DEFAULT_DISTANCE));
-          heightMultiplier = Mathf.Clamp(heightMultiplier, 0.5f, 1.0f);
-          float dynamicHeight = CAMERA_OFFSET_HEIGHT * heightMultiplier;
+            Vector3 offset = goalToPlayerDirection * safeZoomDistance + Vector3.up * dynamicHeight;
+            targetPosition = smoothedPlayerPosition + offset;
+          }
+          else
+          {
+            Vector3 goalToPlayerDirection = (smoothedPlayerPosition - goal.transform.position).normalized;
 
-          // Position camera above and behind player
-          Vector3 offset = -playerForward * currentZoomDistance + Vector3.up * dynamicHeight;
-          targetPosition = smoothedPlayerPosition + offset;
+            float safeZoomDistance = Mathf.Max(0f, currentZoomDistance);
+
+            float heightMultiplier = Mathf.Lerp(1.0f, 0.5f, (safeZoomDistance - config.zoomDefaultDistance) / (config.zoomMaxDistance - config.zoomDefaultDistance));
+            heightMultiplier = Mathf.Clamp(heightMultiplier, 0.5f, 1.0f);
+            float dynamicHeight = config.cameraOffsetHeight * heightMultiplier;
+
+            Vector3 offset = goalToPlayerDirection * safeZoomDistance + Vector3.up * dynamicHeight;
+            targetPosition = smoothedPlayerPosition + offset;
+          }
         }
         catch (System.NullReferenceException)
         {
@@ -231,14 +363,14 @@ namespace BetterReplays
           Vector2 mouseDelta = Mouse.current.delta.ReadValue();
           freeLookRotation.x += mouseDelta.x * this.lookSensitivity;
           freeLookRotation.y -= mouseDelta.y * this.lookSensitivity;
-          freeLookRotation.y = Mathf.Clamp(freeLookRotation.y, -FIRST_PERSON_PITCH_LIMIT, FIRST_PERSON_PITCH_LIMIT);
+          freeLookRotation.y = Mathf.Clamp(freeLookRotation.y, -config.firstPersonPitchLimit, config.firstPersonPitchLimit);
 
           Quaternion freeLookQuat = Quaternion.Euler(freeLookRotation.y, freeLookRotation.x, 0f);
           camera.transform.SetPositionAndRotation(targetPosition, freeLookQuat);
         }
         else
         {
-          float rotationLerpSpeed = FIRST_PERSON_ROTATION_LERP_SPEED;
+          float rotationLerpSpeed = config.firstPersonRotationLerpSpeed;
           Quaternion smoothedRotation = Quaternion.Lerp(camera.transform.rotation, targetRotation, rotationLerpSpeed);
           camera.transform.SetPositionAndRotation(targetPosition, smoothedRotation);
         }
@@ -256,15 +388,15 @@ namespace BetterReplays
       try
       {
         float lerpSpeed;
-        if (currentZoomDistance <= ZOOM_DEFAULT_DISTANCE)
+        if (currentZoomDistance <= config.zoomDefaultDistance)
         {
-          float t = (currentZoomDistance - ZOOM_MIN_DISTANCE) / (ZOOM_DEFAULT_DISTANCE - ZOOM_MIN_DISTANCE);
-          lerpSpeed = Mathf.Lerp(LERP_SPEED_AT_MIN_ZOOM, LERP_SPEED_AT_DEFAULT_ZOOM, t);
+          float t = (currentZoomDistance - config.zoomMinDistance) / (config.zoomDefaultDistance - config.zoomMinDistance);
+          lerpSpeed = Mathf.Lerp(config.lerpSpeedAtMinZoom, config.lerpSpeedAtDefaultZoom, t);
         }
         else
         {
-          float t = (currentZoomDistance - ZOOM_DEFAULT_DISTANCE) / (ZOOM_MAX_DISTANCE - ZOOM_DEFAULT_DISTANCE);
-          lerpSpeed = Mathf.Lerp(LERP_SPEED_AT_DEFAULT_ZOOM, LERP_SPEED_AT_MAX_ZOOM, t);
+          float t = (currentZoomDistance - config.zoomDefaultDistance) / (config.zoomMaxDistance - config.zoomDefaultDistance);
+          lerpSpeed = Mathf.Lerp(config.lerpSpeedAtDefaultZoom, config.lerpSpeedAtMaxZoom, t);
         }
 
         Vector3 smoothedPosition;
@@ -274,7 +406,7 @@ namespace BetterReplays
           Vector2 mouseDelta = Mouse.current.delta.ReadValue();
           freeLookRotation.x += mouseDelta.x * lookSensitivity;
           freeLookRotation.y -= mouseDelta.y * lookSensitivity;
-          freeLookRotation.y = Mathf.Clamp(freeLookRotation.y, FREE_LOOK_PITCH_MIN, FREE_LOOK_PITCH_MAX);
+          freeLookRotation.y = Mathf.Clamp(freeLookRotation.y, config.freeLookPitchMin, config.freeLookPitchMax);
 
           Vector3 playerHead = goalScorer.PlayerBody.PlayerMesh.PlayerHead.transform.position;
           float distance = currentZoomDistance;
@@ -282,7 +414,7 @@ namespace BetterReplays
           Quaternion orbitalRotation = Quaternion.Euler(freeLookRotation.y, freeLookRotation.x, 0f);
           Vector3 orbitalPosition = playerHead + orbitalRotation * Vector3.back * distance;
 
-          smoothedPosition = Vector3.Lerp(camera.transform.position, orbitalPosition, FREE_LOOK_ORBITAL_LERP_SPEED);
+          smoothedPosition = Vector3.Lerp(camera.transform.position, orbitalPosition, config.freeLookOrbitalLerpSpeed);
 
           Vector3 lookDirection = (playerHead - smoothedPosition).normalized;
           Quaternion targetLookRotation = Quaternion.LookRotation(lookDirection);
@@ -290,7 +422,7 @@ namespace BetterReplays
           if (isTransitioningToFreeLook)
           {
             freeLookTransitionTime += Time.deltaTime;
-            float transitionDuration = FREE_LOOK_TRANSITION_DURATION;
+            float transitionDuration = config.freeLookTransitionDuration;
             float t = Mathf.Clamp01(freeLookTransitionTime / transitionDuration);
 
             Quaternion smoothedRotation = Quaternion.Lerp(originalRotation, targetLookRotation, t);
@@ -308,23 +440,52 @@ namespace BetterReplays
         }
         else
         {
-          smoothedPosition = Vector3.Lerp(camera.transform.position, targetPosition, lerpSpeed);
-
-          if (currentZoomDistance >= MIN_CAMERA_DISTANCE)
+          // Normal third person mode
+          Quaternion targetThirdPersonRotation;
+          if (goalScored)
           {
-            Vector3 headPosition = smoothedPlayerPosition;
-            Vector3 directionFromHead = (smoothedPosition - headPosition).normalized;
-            float currentDistance = Vector3.Distance(smoothedPosition, headPosition);
+            // After goal is scored, look at the player
+            Vector3 lookDirection = (smoothedPlayerPosition - targetPosition).normalized;
+            targetThirdPersonRotation = Quaternion.LookRotation(lookDirection);
+          }
+          else
+          {
+            // Before goal scored, look at the goal
+            Vector3 lookDirection = (goal.transform.position - targetPosition).normalized;
+            targetThirdPersonRotation = Quaternion.LookRotation(lookDirection);
+          }
+          Quaternion finalRotation = targetThirdPersonRotation;
+          if (isTransitioningAfterGoal)
+          {
+            goalTransitionTime += Time.deltaTime;
+            finalRotation = Quaternion.Lerp(goalTransitionStartRotation, targetThirdPersonRotation, config.goalToPlayerRotationLerpSpeed);
 
-            if (currentDistance < MIN_CAMERA_DISTANCE)
+            if (Quaternion.Angle(finalRotation, targetThirdPersonRotation) < 1f)
             {
-              Vector3 idealPosition = headPosition + directionFromHead * MIN_CAMERA_DISTANCE;
-              float pushBackSpeed = PUSH_BACK_SPEED;
-              smoothedPosition = Vector3.Lerp(smoothedPosition, idealPosition, pushBackSpeed);
+              isTransitioningAfterGoal = false;
             }
           }
 
-          camera.transform.position = smoothedPosition;
+          // Apply single lerp to reach target position and rotation
+          Vector3 finalPosition = Vector3.Lerp(camera.transform.position, targetPosition, lerpSpeed);
+          finalRotation = Quaternion.Lerp(camera.transform.rotation, finalRotation, lerpSpeed);
+
+          // Apply push back if camera is too close to player
+          if (currentZoomDistance >= config.minCameraDistance)
+          {
+            Vector3 headPosition = smoothedPlayerPosition;
+            Vector3 directionFromHead = (finalPosition - headPosition).normalized;
+            float currentDistance = Vector3.Distance(finalPosition, headPosition);
+
+            if (currentDistance < config.minCameraDistance)
+            {
+              Vector3 idealPosition = headPosition + directionFromHead * config.minCameraDistance;
+              float pushBackSpeed = config.pushBackSpeed;
+              finalPosition = Vector3.Lerp(finalPosition, idealPosition, pushBackSpeed);
+            }
+          }
+
+          camera.transform.SetPositionAndRotation(finalPosition, finalRotation);
         }
 
         ShowGoalScorer();
@@ -349,7 +510,7 @@ namespace BetterReplays
         Vector3 playerPosition = goalScorer.PlayerCamera.transform.position;
         Vector3 playerForward = goalScorer.PlayerCamera.transform.forward;
 
-        Vector3 initialPosition = playerPosition - playerForward * INITIAL_CAMERA_DISTANCE;
+        Vector3 initialPosition = playerPosition - playerForward * config.initialCameraDistance;
 
         camera.transform.position = initialPosition;
         camera.transform.rotation = goalScorer.PlayerCamera.transform.rotation;
@@ -428,7 +589,6 @@ namespace BetterReplays
           // Since the username text and number text for a player is private, we need to use Traverse to obtain them for hiding and showing later.
           if (this.goalScorer?.PlayerBody?.PlayerMesh != null)
           {
-            BetterReplaysPlugin.Log("PlayerMesh is not null");
             var playerMeshTraverse = Traverse.Create(this.goalScorer.PlayerBody.PlayerMesh);
 
             var usernameTextField = playerMeshTraverse.Field("usernameText").GetValue<TMP_Text>();
@@ -442,7 +602,7 @@ namespace BetterReplays
           }
           else
           {
-            BetterReplaysPlugin.Log("PlayerMesh is null");
+            BetterReplaysPlugin.LogWarning("PlayerMesh is null when trying to set goal scorer");
           }
           break;
         }
@@ -495,6 +655,14 @@ namespace BetterReplays
       if (goalScored)
       {
         BetterReplaysPlugin.Log("Goal scored flag set - camera will now target goal scorer");
+
+        // Initiate rotation transition from goal-focused to player-focused
+        if (camera != null)
+        {
+          isTransitioningAfterGoal = true;
+          goalTransitionTime = 0f;
+          goalTransitionStartRotation = camera.transform.rotation;
+        }
       }
     }
 

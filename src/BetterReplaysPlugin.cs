@@ -29,6 +29,9 @@ namespace BetterReplays
       [HarmonyPostfix]
       static void Postfix(ReplayManager __instance, BaseCamera ___replayCamera)
       {
+        Log("Goal replay starting - checking configuration...");
+        BetterReplaysConfig.LoadConfig();
+
         betterReplayHandler = __instance.ReplayRecorder.gameObject.AddComponent<BetterReplaysHandler>();
         betterReplayHandler.SetReplayCamera(___replayCamera);
 
@@ -113,6 +116,9 @@ namespace BetterReplays
         else
         {
           Log("Bettering replays...");
+          Log("Initializing configuration...");
+          BetterReplaysConfig.LoadConfig();
+
           harmony.PatchAll();
           Log("List of patched methods:");
           LogAllPatchedMethods();
